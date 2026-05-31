@@ -144,22 +144,71 @@ def wait_for_health(port: int, timeout: int = 120) -> bool:
     return False
 
 
+def start_cloudflared(port: int) -> str:
+    """Free public URL — no signup required (Cloudflare quick tunnel)."""
+    import re
+
+    cf = Path("/usr/local/bin/cloudflared")
+    if not cf.exists():
+        print("Downloading cloudflared…")
+        subprocess.check_call(
+            [
+                "wget",
+                "-q",
+                "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+                "-O",
+                str(cf),
+            ]
+        )
+        cf.chmod(0o755)
+
+    proc = subprocess.Popen(
+        [str(cf), "tunnel", "--url", f"http://127.0.0.1:{port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    url_pattern = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        line = proc.stdout.readline() if proc.stdout else ""
+        if not line and proc.poll() is not None:
+            break
+        match = url_pattern.search(line)
+        if match:
+            public_url = match.group(0).rstrip("/")
+            print(f"\nPublic backend URL (cloudflared):\n  {public_url}\n")
+            return public_url
+
+    proc.kill()
+    raise RuntimeError("cloudflared failed — try setting NGROK_AUTHTOKEN instead")
+
+
 def start_ngrok(port: int) -> str:
     from pyngrok import ngrok
 
     token = _env("NGROK_AUTHTOKEN")
-    if token:
-        ngrok.set_auth_token(token)
-    else:
-        print(
-            "Tip: set NGROK_AUTHTOKEN — "
-            "https://dashboard.ngrok.com/get-started/your-authtoken"
-        )
+    if not token:
+        raise ValueError("NGROK_AUTHTOKEN not set")
 
+    ngrok.set_auth_token(token)
     tunnel = ngrok.connect(port, bind_tls=True)
     public_url = tunnel.public_url.rstrip("/")
-    print(f"\nPublic backend URL:\n  {public_url}\n")
+    print(f"\nPublic backend URL (ngrok):\n  {public_url}\n")
     return public_url
+
+
+def start_public_tunnel(port: int) -> str:
+    if _env("NGROK_AUTHTOKEN"):
+        try:
+            return start_ngrok(port)
+        except Exception as exc:
+            print(f"ngrok failed ({exc}) — falling back to cloudflared…")
+
+    print("Using cloudflared (free, no signup). Or set NGROK_AUTHTOKEN to use ngrok.")
+    return start_cloudflared(port)
 
 
 def main() -> None:
@@ -198,7 +247,7 @@ def main() -> None:
         proc.kill()
         sys.exit(1)
 
-    public_url = start_ngrok(port)
+    public_url = start_public_tunnel(port)
 
     print("=" * 60)
     print("Connect your Mac frontend")
