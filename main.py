@@ -26,14 +26,28 @@ APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = APP_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+
+def _cors_origins() -> list[str]:
+    """Explicit origins only — wildcard + credentials breaks browser CORS."""
+    raw = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
+    if not origins:
+        origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    return origins
+
+
 app = FastAPI(title="Human 3D Scan API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
