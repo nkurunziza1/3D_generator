@@ -17,6 +17,9 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from pipeline.reconstruct import run_reconstruction
 
@@ -27,16 +30,15 @@ OUTPUT_DIR = APP_DIR / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
+def _cors_allow_all() -> bool:
+    raw = os.getenv("CORS_ORIGINS", "*").strip().lower()
+    return raw in ("*", "all", "")
+
+
 def _cors_origins() -> list[str]:
-    """Explicit origins only — wildcard + credentials breaks browser CORS."""
-    raw = os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
-    )
-    origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
-    if not origins:
-        origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
-    return origins
+    if _cors_allow_all():
+        return ["*"]
+    return [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 
 
 app = FastAPI(title="Human 3D Scan API", version="1.0.0")
@@ -45,10 +47,27 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+class _AllowAllCorsMiddleware(BaseHTTPMiddleware):
+    """Ensure CORS headers on every response (incl. /outputs static files)."""
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            response = Response(status_code=204)
+        else:
+            response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+
+app.add_middleware(_AllowAllCorsMiddleware)
 
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 
