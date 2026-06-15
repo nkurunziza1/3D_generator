@@ -142,7 +142,7 @@ def write_env(backend_dir: Path, model_mode: str, hf_token: str) -> None:
         "HF_MODEL_ID=nvidia/vgg-ttt",
         "HOST=0.0.0.0",
         "PORT=8000",
-        "CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000",
+        "CORS_ORIGINS=*",
     ]
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {env_path}")
