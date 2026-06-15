@@ -36,28 +36,45 @@ def check_gpu() -> None:
         print("PyTorch not installed yet — will install in next step.")
 
 
+# Colab ships NumPy 2.x + numba 0.60; VGG-T³/OpenCV need NumPy 1.x wheels.
+NUMPY_PIN = "numpy>=1.26.4,<2.0"
+OPENCV_PIN = "opencv-python-headless>=4.9.0,<4.10.0"
+
+
 def _pip(*args: str) -> None:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *args])
 
 
-def _repair_numpy_abi() -> None:
-    """Fix 'numpy.core.multiarray failed to import' after mixed pip installs on Colab."""
-    print("Repairing NumPy / OpenCV binary compatibility…")
-    _pip("--force-reinstall", "--no-cache-dir", "numpy", "opencv-python-headless>=4.9,<4.10")
+def _verify_numpy_stack(*, include_vggt3: bool = True) -> None:
+    imports = "import numpy; import cv2; import torch; "
+    if include_vggt3:
+        imports += "from vggttt.nets.vggt.models.vggt import VGGT; "
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import numpy; import cv2; import torch; "
-            "print(f'OK numpy={numpy.__version__} torch={torch.__version__} cv2={cv2.__version__}')",
+            imports
+            + "print(f'OK numpy={numpy.__version__} torch={torch.__version__} cv2={cv2.__version__}')",
         ],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
+        print(result.stdout)
         print(result.stderr)
-        raise RuntimeError("NumPy/OpenCV repair failed — restart Colab runtime and re-run.")
+        raise RuntimeError(
+            "NumPy/OpenCV import check failed. "
+            "Use Runtime → Restart runtime, then re-run from the top."
+        )
     print(result.stdout.strip())
+
+
+def _repair_numpy_abi(*, include_vggt3: bool = True) -> None:
+    """Pin NumPy 1.x then reinstall OpenCV against it (Colab defaults break cv2)."""
+    print("Pinning NumPy 1.x and reinstalling OpenCV…")
+    _pip("--force-reinstall", "--no-cache-dir", NUMPY_PIN)
+    _pip("--force-reinstall", "--no-cache-dir", "--no-deps", OPENCV_PIN)
+    _verify_numpy_stack(include_vggt3=include_vggt3)
 
 
 def _install_vggt3_stack(backend_dir: Path) -> None:
@@ -67,6 +84,9 @@ def _install_vggt3_stack(backend_dir: Path) -> None:
         subprocess.check_call(
             ["git", "clone", "--depth", "1", "https://github.com/nv-dvl/vgg-ttt.git", str(vgg_dir)]
         )
+
+    print("Pinning NumPy 1.x before PyTorch/VGG-T³…")
+    _pip(NUMPY_PIN)
 
     print("Installing PyTorch 2.7.1 (VGG-T³ requirement)…")
     try:
@@ -84,13 +104,12 @@ def _install_vggt3_stack(backend_dir: Path) -> None:
     _pip("-r", str(vgg_dir / "requirements.txt"))
     _pip("-e", str(vgg_dir))
 
-    print("Installing FastAPI backend (without conflicting numpy/torch)…")
+    print("Installing FastAPI backend (skip numpy/torch/huggingface-hub)…")
     _pip(
         "fastapi>=0.115.0,<1.0",
         "uvicorn[standard]>=0.34.0,<1.0",
         "python-multipart>=0.0.20",
         "python-dotenv>=1.1.0",
-        "huggingface-hub>=0.30.0",
         "pillow>=10.0.0",
         "openai>=1.50.0",
         "replicate>=1.0.0",
@@ -112,7 +131,7 @@ def install_deps(backend_dir: Path, model_mode: str) -> None:
     if model_mode == "vggt":
         print("Installing Meta VGGT…")
         _pip("git+https://github.com/facebookresearch/vggt.git")
-        _repair_numpy_abi()
+        _repair_numpy_abi(include_vggt3=False)
 
 
 def write_env(backend_dir: Path, model_mode: str, hf_token: str) -> None:
